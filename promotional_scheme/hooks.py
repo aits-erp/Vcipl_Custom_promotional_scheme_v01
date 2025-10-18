@@ -10,6 +10,16 @@ app_license = "mit"
 
 # required_apps = []
 
+doc_events = {
+    "Sales Invoice": {
+        "on_submit": "promotional_scheme.promotional_scheme.doctype.custom_promotional_scheme.custom_promotional_scheme.apply_promotional_schemes"
+    },
+    "Purchase Invoice": {
+        "on_submit": "promotional_scheme.promotional_scheme.doctype.custom_promotional_scheme.custom_promotional_scheme.apply_promotional_schemes"
+    },
+}
+
+
 # Each item in the list will be shown as an app in the apps page
 # add_to_apps_screen = [
 # 	{

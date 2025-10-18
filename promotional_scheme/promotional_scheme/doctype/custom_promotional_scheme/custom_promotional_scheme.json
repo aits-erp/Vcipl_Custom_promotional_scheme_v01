@@ -1,0 +1,241 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "field:scheme_name",
+ "creation": "2025-10-15 16:23:06.117265",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "scheme_name",
+  "section_break_nnoq",
+  "apply_on",
+  "column_break_tdgm",
+  "promotional_scheme_on_item_code",
+  "promotional_scheme_on_item_group",
+  "validity_settings_section",
+  "valid_from",
+  "column_break_pfjs",
+  "valid_to",
+  "select_the_type_of_promo_validation_section",
+  "type_of_promo_validation",
+  "amount_discount_slabs_section",
+  "minimum_amount",
+  "column_break_gzww",
+  "discount_percentage",
+  "quantity_discount_slabs_section",
+  "minimum_quantity",
+  "column_break_nrei",
+  "free_quantity",
+  "party_information_section",
+  "select_the_party",
+  "column_break_vtlc",
+  "applicable_for",
+  "buying_applicable_for",
+  "customer",
+  "customer_group",
+  "territory",
+  "supplier",
+  "supplier_group"
+ ],
+ "fields": [
+  {
+   "fieldname": "scheme_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Scheme Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "apply_on",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Apply On",
+   "options": "\nItem Code\nItem Group",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_tdgm",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.apply_on == 'Item Code'",
+   "fieldname": "promotional_scheme_on_item_code",
+   "fieldtype": "Table",
+   "label": "Promotional scheme on Item code",
+   "options": "Pricing Rule Item Code"
+  },
+  {
+   "depends_on": "eval:doc.apply_on == 'Item Group'",
+   "fieldname": "promotional_scheme_on_item_group",
+   "fieldtype": "Table",
+   "label": "Promotional scheme on item group",
+   "options": "Pricing Rule Item Group"
+  },
+  {
+   "fieldname": "validity_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Validity Settings"
+  },
+  {
+   "fieldname": "valid_from",
+   "fieldtype": "Date",
+   "label": "Valid From"
+  },
+  {
+   "fieldname": "valid_to",
+   "fieldtype": "Date",
+   "label": "Valid To"
+  },
+  {
+   "depends_on": "eval:doc.type_of_promo_validation == \"Based on Minimum Amount\"\r\n",
+   "fieldname": "amount_discount_slabs_section",
+   "fieldtype": "Section Break",
+   "label": "Amount discount slabs"
+  },
+  {
+   "fieldname": "minimum_amount",
+   "fieldtype": "Float",
+   "label": "Minimum Amount"
+  },
+  {
+   "fieldname": "discount_percentage",
+   "fieldtype": "Float",
+   "label": "Discount Percentage"
+  },
+  {
+   "depends_on": "eval:doc.type_of_promo_validation == \"Based on Minimum Quantity\"",
+   "fieldname": "quantity_discount_slabs_section",
+   "fieldtype": "Section Break",
+   "label": "Quantity discount slabs"
+  },
+  {
+   "fieldname": "minimum_quantity",
+   "fieldtype": "Int",
+   "label": "Minimum Quantity"
+  },
+  {
+   "fieldname": "free_quantity",
+   "fieldtype": "Int",
+   "label": "Free Quantity"
+  },
+  {
+   "fieldname": "section_break_nnoq",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "party_information_section",
+   "fieldtype": "Section Break",
+   "label": "Party Information"
+  },
+  {
+   "fieldname": "select_the_party",
+   "fieldtype": "Select",
+   "label": "Select the Party",
+   "options": "\nSelling\nBuying"
+  },
+  {
+   "fieldname": "column_break_vtlc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval: doc.select_the_party == 'Selling'",
+   "fieldname": "applicable_for",
+   "fieldtype": "Select",
+   "label": "Applicable for",
+   "options": "\nCustomer\nCustomer Group\nTerritory"
+  },
+  {
+   "depends_on": "eval:doc.applicable_for=='Customer'",
+   "fieldname": "customer",
+   "fieldtype": "Table MultiSelect",
+   "label": "Customer",
+   "options": "Customer Item"
+  },
+  {
+   "depends_on": "eval:doc.applicable_for=='Customer Group'",
+   "fieldname": "customer_group",
+   "fieldtype": "Table MultiSelect",
+   "label": "Customer Group",
+   "options": "Customer Group Item"
+  },
+  {
+   "depends_on": "eval:doc.applicable_for==\"Territory\"",
+   "fieldname": "territory",
+   "fieldtype": "Table MultiSelect",
+   "label": "Territory",
+   "options": "Territory Item"
+  },
+  {
+   "depends_on": "eval:doc.buying_applicable_for=='Supplier'",
+   "fieldname": "supplier",
+   "fieldtype": "Table MultiSelect",
+   "label": "Supplier",
+   "options": "Supplier Item"
+  },
+  {
+   "depends_on": "eval:doc.buying_applicable_for==\"Supplier Group\"",
+   "fieldname": "supplier_group",
+   "fieldtype": "Table MultiSelect",
+   "label": "Supplier Group",
+   "options": "Supplier Group Item"
+  },
+  {
+   "depends_on": "eval: doc.select_the_party== 'Buying'",
+   "fieldname": "buying_applicable_for",
+   "fieldtype": "Select",
+   "label": "Buying Applicable for",
+   "options": "\nSupplier\nSupplier Group"
+  },
+  {
+   "fieldname": "column_break_pfjs",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_gzww",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_nrei",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "select_the_type_of_promo_validation_section",
+   "fieldtype": "Section Break",
+   "label": "Select the Type of Promo Validation"
+  },
+  {
+   "fieldname": "type_of_promo_validation",
+   "fieldtype": "Select",
+   "label": "Type of Promo Validation",
+   "options": "\nBased on Minimum Amount\nBased on Minimum Quantity"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2025-10-17 11:15:17.900016",
+ "modified_by": "Administrator",
+ "module": "Promotional Scheme",
+ "name": "Custom Promotional Scheme",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

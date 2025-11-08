@@ -272,7 +272,7 @@ def add_free_items_to_invoice(doc, matching_items, free_qty, scheme_name):
         # append to items table
         doc.append("items", new_row)
 
-    frappe.msgprint(f"🎁 Free Quantity ({free_qty}) added for scheme '{scheme_name}'.")
+    frappe.msgprint(f"🎁 Free Quantity ({free_qty})  '{scheme_name}'.")
 
 # import frappe
 # from frappe.model.document import Document

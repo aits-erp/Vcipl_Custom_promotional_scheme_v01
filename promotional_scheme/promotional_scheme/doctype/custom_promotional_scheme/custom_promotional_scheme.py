@@ -10,6 +10,13 @@ class CustomPromotionalScheme(Document):
     def validate(self):
         self.validate_dates()
         self.validate_condition_fields()
+        self.validate_apply_on_exclusivity()
+
+    def validate_apply_on_exclusivity(self):
+        if self.apply_on == "Item Code" and self.promotional_scheme_on_item_group:
+            frappe.throw("You selected 'Item Code' but added rows in 'Promotional scheme on item group'. Please clear them.")
+        if self.apply_on == "Item Group" and self.promotional_scheme_on_item_code:
+            frappe.throw("You selected 'Item Group' but added rows in 'Promotional scheme on item code'. Please clear them.")
 
     def validate_dates(self):
         if self.valid_from and self.valid_to and getdate(self.valid_from) > getdate(self.valid_to):

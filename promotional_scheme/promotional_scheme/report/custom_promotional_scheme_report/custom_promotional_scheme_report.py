@@ -299,109 +299,6 @@ def _apply_report_filters(result_rows, filters):
 
     return rows
 
-# -------------------------
-# SQL helper to get totals for a scheme (single grouped query per scheme & side)
-# parties: list of tuples (party_type, party_name) where party_name may be None meaning All
-# items: list of item_codes or [None] meaning All
-# -------------------------
-# def _get_totals_for_scheme(scheme_doc, party_side, parties, items, report_from=None, report_to=None):
-#     """
-#     Returns dict keyed by (party_name or None, item_code or None) -> { total_amount, total_qty }
-#     """
-#     # Normalize date range
-#     if report_from:
-#         from_date = getdate(report_from)
-#     else:
-#         from_date = getdate(getattr(scheme_doc, "valid_from", None)) if getattr(scheme_doc, "valid_from", None) else None
-
-#     if report_to:
-#         to_date = getdate(report_to)
-#     else:
-#         to_date = getdate(getattr(scheme_doc, "valid_to", None)) if getattr(scheme_doc, "valid_to", None) else None
-
-#     # Build party list values (only concrete names, ignore 'All' marker)
-#     concrete_parties = [pname for (ptype, pname) in parties if pname]
-#     # For SQL we need lists of parties separated by Customer/Supplier depending on side.
-#     # Items concrete list:
-#     concrete_items = [i for i in items if i]
-
-#     params = []
-#     where_clauses = ["si.docstatus = 1"]
-
-#     # date filter
-#     if from_date and to_date:
-#         where_clauses.append("si.posting_date BETWEEN %s AND %s")
-#         params.extend([str(from_date), str(to_date)])
-#     elif from_date:
-#         where_clauses.append("si.posting_date >= %s")
-#         params.append(str(from_date))
-#     elif to_date:
-#         where_clauses.append("si.posting_date <= %s")
-#         params.append(str(to_date))
-
-#     # party filter (if concrete parties provided) - build OR block
-#     party_ors = []
-#     if party_side == "Selling":
-#         if concrete_parties:
-#             placeholders = ", ".join(["%s"] * len(concrete_parties))
-#             party_ors.append(f"si.customer IN ({placeholders})")
-#             params.extend(concrete_parties)
-#     else:
-#         if concrete_parties:
-#             placeholders = ", ".join(["%s"] * len(concrete_parties))
-#             party_ors.append(f"si.supplier IN ({placeholders})")
-#             params.extend(concrete_parties)
-
-#     if party_ors:
-#         where_clauses.append("(" + " OR ".join(party_ors) + ")")
-
-#     # item filter - will be appended to SQL separately
-#     item_clause = ""
-#     if concrete_items:
-#         placeholders = ", ".join(["%s"] * len(concrete_items))
-#         item_clause = f" AND sii.item_code IN ({placeholders})"
-
-#     # Decide table names
-#     if party_side == "Selling":
-#         header = "`tabSales Invoice`"
-#         item_table = "`tabSales Invoice Item`"
-#         party_col = "si.customer"
-#     else:
-#         header = "`tabPurchase Invoice`"
-#         item_table = "`tabPurchase Invoice Item`"
-#         party_col = "si.supplier"
-
-#     sql = f"""
-#         SELECT
-#            {party_col} AS party_name,
-#            sii.item_code AS item_code,
-#            SUM(COALESCE(sii.base_net_amount, sii.base_amount, sii.amount, 0)) AS total_amount,
-#            SUM(COALESCE(sii.qty, 0)) AS total_qty
-#         FROM {header} si
-#         JOIN {item_table} sii ON sii.parent = si.name
-#         WHERE {" AND ".join(where_clauses)}
-#         {item_clause}
-#         GROUP BY {party_col}, sii.item_code
-#     """
-
-#     final_params = list(params)
-#     if concrete_items:
-#         final_params.extend(concrete_items)
-
-#     rows = frappe.db.sql(sql, tuple(final_params), as_dict=True) or []
-
-#     # Map to dict keyed by (party_name or None, item_code or None)
-#     totals_map = {}
-#     for r in rows:
-#         p = r.get("party_name") or None
-#         item = r.get("item_code") or None
-#         totals_map[(p, item)] = {
-#             "total_amount": flt(r.get("total_amount") or 0.0),
-#             "total_qty": flt(r.get("total_qty") or 0.0)
-#         }
-
-#     return totals_map
-
 
 def _get_totals_for_scheme(scheme_doc, party_side, parties, items, report_from=None, report_to=None):
     """
@@ -569,18 +466,32 @@ def get_data(filters):
                 total_amount = flt(totals.get("total_amount") or 0.0)
                 total_qty = flt(totals.get("total_qty") or 0.0)
 
+                # validation_type = (scheme_doc.type_of_promo_validation or "").strip()
+                # eligible = False
+                # if validation_type == "Based on Minimum Amount":
+                #     min_amount = flt(getattr(scheme_doc, "minimum_amount", 0) or 0)
+                #     if min_amount > 0 and total_amount >= min_amount:
+                #         eligible = True
+                # elif validation_type == "Based on Minimum Quantity":
+                #     min_qty = flt(getattr(scheme_doc, "minimum_quantity", 0) or 0)
+                #     if min_qty > 0 and total_qty >= min_qty:
+                #         eligible = True
+                # else:
+                #     eligible = bool(total_amount > 0 or total_qty > 0)
+
                 validation_type = (scheme_doc.type_of_promo_validation or "").strip()
+                min_amount = flt(getattr(scheme_doc, "minimum_amount", 0) or 0)
+                min_qty = flt(getattr(scheme_doc, "minimum_quantity", 0) or 0)
+
                 eligible = False
-                if validation_type == "Based on Minimum Amount":
-                    min_amount = flt(getattr(scheme_doc, "minimum_amount", 0) or 0)
-                    if min_amount > 0 and total_amount >= min_amount:
-                        eligible = True
-                elif validation_type == "Based on Minimum Quantity":
-                    min_qty = flt(getattr(scheme_doc, "minimum_quantity", 0) or 0)
-                    if min_qty > 0 and total_qty >= min_qty:
-                        eligible = True
+                if validation_type == "Based on Minimum Amount" and min_amount > 0:
+                    eligible = total_amount >= min_amount
+                elif validation_type == "Based on Minimum Quantity" and min_qty > 0:
+                    eligible = total_qty >= min_qty
                 else:
-                    eligible = bool(total_amount > 0 or total_qty > 0)
+                    # fallback: if any non-zero sales/purchase activity
+                    eligible = (total_amount > 0 or total_qty > 0)
+
 
                 item_or_group_display = item_code if item_code else "-"
 

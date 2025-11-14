@@ -58,26 +58,74 @@ def _extract_values_from_child_rows(doc, fieldname, possible_keys=None):
                     break
     return vals
 
-def _extract_item_codes_from_scheme(scheme_doc):
+# def _extract_item_codes_from_scheme(scheme_doc):
+#     item_codes = set()
+#     # Item codes table (child)
+#     try:
+#         item_code_vals = _extract_values_from_child_rows(scheme_doc, "promotional_scheme_on_item_code", possible_keys=["item_code", "item"])
+#         item_codes.update(item_code_vals)
+#     except Exception:
+#         pass
+
+#     # Item groups -> expand to item codes
+#     try:
+#         item_group_vals = _extract_values_from_child_rows(scheme_doc, "promotional_scheme_on_item_group", possible_keys=["item_group", "group"])
+#         if item_group_vals:
+#             items = frappe.get_all("Item", filters={"item_group": ["in", list(item_group_vals)]}, pluck="name") or []
+#             item_codes.update(items)
+#     except Exception:
+#         pass
+
+#     # normalize
+#     return set([str(i) for i in item_codes if i])
+
+def _extract_items_and_groups(scheme_doc):
+    """
+    Return two sets:
+      - item_codes: concrete item codes explicitly listed in the scheme
+      - item_groups: concrete item groups explicitly listed in the scheme
+    Note: For 'Item Group' schemes we will use item_groups for display and use
+    item_codes internally (expanded from groups) for SQL filtering if needed.
+    """
     item_codes = set()
-    # Item codes table (child)
+    item_groups = set()
+
+    # explicit item codes child table
     try:
-        item_code_vals = _extract_values_from_child_rows(scheme_doc, "promotional_scheme_on_item_code", possible_keys=["item_code", "item"])
-        item_codes.update(item_code_vals)
+        item_code_vals = _extract_values_from_child_rows(
+            scheme_doc, "promotional_scheme_on_item_code", possible_keys=["item_code", "item"]
+        )
+        item_codes.update(item_code_vals or [])
     except Exception:
         pass
 
-    # Item groups -> expand to item codes
+    # explicit item groups child table
     try:
-        item_group_vals = _extract_values_from_child_rows(scheme_doc, "promotional_scheme_on_item_group", possible_keys=["item_group", "group"])
-        if item_group_vals:
-            items = frappe.get_all("Item", filters={"item_group": ["in", list(item_group_vals)]}, pluck="name") or []
-            item_codes.update(items)
+        item_group_vals = _extract_values_from_child_rows(
+            scheme_doc, "promotional_scheme_on_item_group", possible_keys=["item_group", "group"]
+        )
+        item_groups.update(item_group_vals or [])
     except Exception:
         pass
 
-    # normalize
-    return set([str(i) for i in item_codes if i])
+    # If groups exist, expand to item codes (for SQL filtering / totals)
+    expanded_codes_from_groups = set()
+    if item_groups:
+        try:
+            expanded_codes_from_groups = set(
+                frappe.get_all("Item", filters={"item_group": ["in", list(item_groups)]}, pluck="name") or []
+            )
+        except Exception:
+            expanded_codes_from_groups = set()
+
+    # final sets (normalize)
+    final_item_codes = set([str(i) for i in (item_codes | expanded_codes_from_groups) if i])
+    final_item_groups = set([str(g) for g in item_groups if g])
+
+    return {
+        "item_codes": final_item_codes,
+        "item_groups": final_item_groups
+    }
 
 def _extract_party_values_from_scheme(scheme_doc):
     customers = _extract_values_from_child_rows(scheme_doc, "customer", possible_keys=["customer", "value"])
@@ -108,137 +156,6 @@ def _extract_party_values_from_scheme(scheme_doc):
         "suppliers": set([str(s) for s in suppliers if s]),
         "supplier_groups": set([str(sg) for sg in supplier_groups if sg]),
     }
-
-# -------------------------
-# Main data builder
-# -------------------------
-
-# def get_data(filters):
-#     # Filter schemes first (supports scheme_name, apply_on, from_date, to_date)
-#     sql_where = ["1=1"]
-#     params = {}
-
-#     if filters.get("scheme_name"):
-#         sql_where.append("name = %(scheme_name)s")
-#         params["scheme_name"] = filters.get("scheme_name")
-
-#     if filters.get("apply_on"):
-#         sql_where.append("apply_on = %(apply_on)s")
-#         params["apply_on"] = filters.get("apply_on")
-
-#     # Note: we don't limit by valid_from/valid_to here because we will use per-scheme date window
-#     schemes = frappe.db.sql(
-#         f"""SELECT name FROM `tabCustom Promotional Scheme` WHERE {" AND ".join(sql_where)} ORDER BY creation DESC""",
-#         params, as_dict=True
-#     ) or []
-
-#     result_rows = []
-
-#     for s in schemes:
-#         try:
-#             scheme_doc = frappe.get_doc("Custom Promotional Scheme", s.name)
-#         except Exception:
-#             continue
-
-#         # Expand parties and items
-#         parties_dict = _extract_party_values_from_scheme(scheme_doc)
-#         # Build explicit party list (list of tuples (party_type, party_name))
-#         parties = []
-#         party_side = (scheme_doc.select_the_party or "").strip()  # "Selling" or "Buying" expected
-
-#         if party_side == "Selling":
-#             # customers set may be empty -> treat as all
-#             if parties_dict["customers"]:
-#                 for c in sorted(parties_dict["customers"]):
-#                     parties.append(("Customer", c))
-#             else:
-#                 parties = [("Customer", None)]  # None indicates All customers
-#         elif party_side == "Buying":
-#             if parties_dict["suppliers"]:
-#                 for sname in sorted(parties_dict["suppliers"]):
-#                     parties.append(("Supplier", sname))
-#             else:
-#                 parties = [("Supplier", None)]
-#         else:
-#             # If not set, default to Selling + All
-#             parties = [("Customer", None)]
-#             party_side = "Selling"
-
-#         # Items
-#         item_codes = _extract_item_codes_from_scheme(scheme_doc)
-#         # If apply_on is Item Group but there are no groups/items specified -> treat as All
-#         if item_codes:
-#             items = sorted(item_codes)
-#         else:
-#             items = [None]  # None indicates All Items
-
-#         # Date window: report-level filters override scheme dates
-#         report_from = filters.get("from_date") or None
-#         report_to = filters.get("to_date") or None
-
-#         # We'll run a grouped SQL to fetch totals for this scheme in one shot:
-#         totals_map = _get_totals_for_scheme(scheme_doc, party_side, parties, items, report_from, report_to)
-
-#         # Now create rows: cartesian product parties × items
-#         for party_type, party_name in parties:
-#             for item_code in items:
-#                 key = (str(party_name) if party_name else None, str(item_code) if item_code else None)
-#                 totals = totals_map.get(key, {"total_amount": 0.0, "total_qty": 0.0})
-#                 total_amount = flt(totals.get("total_amount") or 0.0)
-#                 total_qty = flt(totals.get("total_qty") or 0.0)
-
-#                 # Eligibility check based on scheme's validation
-#                 validation_type = (scheme_doc.type_of_promo_validation or "").strip()
-#                 eligible = False
-#                 if validation_type == "Based on Minimum Amount":
-#                     min_amount = flt(getattr(scheme_doc, "minimum_amount", 0) or 0)
-#                     if min_amount > 0 and total_amount >= min_amount:
-#                         eligible = True
-#                 elif validation_type == "Based on Minimum Quantity":
-#                     min_qty = flt(getattr(scheme_doc, "minimum_quantity", 0) or 0)
-#                     if min_qty > 0 and total_qty >= min_qty:
-#                         eligible = True
-#                 else:
-#                     # If no validation type, treat as eligible if any activity
-#                     eligible = bool(total_amount > 0 or total_qty > 0)
-
-#                 # item_or_group column: if scheme apply_on Item Group but we expanded to item codes,
-#                 # show the concrete item_code; otherwise show '-' when None
-#                 item_or_group_display = item_code if item_code else "-"
-
-#                 result_rows.append({
-#                     "scheme_name": scheme_doc.scheme_name or scheme_doc.name,
-#                     "party_type": party_type,
-#                     "party_name": party_name or "All",
-#                     "apply_on": scheme_doc.apply_on or "-",
-#                     "item_or_group": item_or_group_display,
-#                     "minimum_amount": flt(getattr(scheme_doc, "minimum_amount", 0) or 0),
-#                     "minimum_quantity": flt(getattr(scheme_doc, "minimum_quantity", 0) or 0),
-#                     "discount_percentage": flt(getattr(scheme_doc, "discount_percentage", 0) or 0),
-#                     "free_quantity": flt(getattr(scheme_doc, "free_quantity", 0) or 0),
-#                     "valid_from": getattr(scheme_doc, "valid_from", None),
-#                     "valid_to": getattr(scheme_doc, "valid_to", None),
-#                     "invoice_amount": total_amount,
-#                     "invoice_qty": total_qty,
-#                     "eligibility_status": "Eligible" if eligible else "Not Eligible",
-#                 })
-#     # after result_rows populated
-#     result_rows = _apply_report_filters(result_rows, filters or {})
-
-#     # (If you still want only eligible rows always, keep your eligible filter:)
-#     # eligible_rows = [row for row in result_rows if row.get("eligibility_status") == "Eligible"]
-#     # return eligible_rows
-
-#     # If you want the report to obey the 'Show Only Eligible' checkbox above, use:
-#     return result_rows
-
-
-#     #return result_rows
-#         # ✅ Keep only rows where eligibility_status is "Eligible"
-#     # eligible_rows = [row for row in result_rows if row.get("eligibility_status") == "Eligible"]
-
-#     # return eligible_rows
-
 
 # -------------------------
 # Apply report filters to result_rows (call this before returning)
@@ -300,11 +217,17 @@ def _apply_report_filters(result_rows, filters):
     return rows
 
 
-def _get_totals_for_scheme(scheme_doc, party_side, parties, items, report_from=None, report_to=None):
+def _get_totals_for_scheme(scheme_doc, party_side, parties, item_codes=None, item_groups=None, report_from=None, report_to=None):
     """
-    Returns dict keyed by (party_name or None, item_code or None) -> { total_amount, total_qty }
-    Enhanced: if no concrete parties given, apply scheme to ALL parties of that side (Selling/Buying)
+    Returns dict keyed by (party_name or None, item_key or None) -> { total_amount, total_qty }
+    - If scheme.apply_on == "Item Group" we group SQL results by Item.item_group and the returned key is (party, item_group).
+    - If scheme.apply_on == "Item Code" we group by Sales/Purchase Invoice Item.item_code and return keys (party, item_code).
+    - If item_codes provided (concrete item codes), we filter by them; if item_groups provided (concrete groups) we filter by those groups.
+    - parties: list of (party_type, party_name) where party_name may be None to indicate All (we handle that in SQL).
     """
+    item_codes = set(item_codes or [])
+    item_groups = set(item_groups or [])
+
     # Normalize date range
     if report_from:
         from_date = getdate(report_from)
@@ -316,14 +239,13 @@ def _get_totals_for_scheme(scheme_doc, party_side, parties, items, report_from=N
     else:
         to_date = getdate(getattr(scheme_doc, "valid_to", None)) if getattr(scheme_doc, "valid_to", None) else None
 
-    # Build party list values (only concrete names, ignore 'All' marker)
+    # Concrete parties (list of names) for SQL where needed
     concrete_parties = [pname for (ptype, pname) in parties if pname]
-    concrete_items = [i for i in items if i]
 
     params = []
     where_clauses = ["si.docstatus = 1"]
 
-    # --- Date filter ---
+    # date
     if from_date and to_date:
         where_clauses.append("si.posting_date BETWEEN %s AND %s")
         params.extend([str(from_date), str(to_date)])
@@ -334,57 +256,95 @@ def _get_totals_for_scheme(scheme_doc, party_side, parties, items, report_from=N
         where_clauses.append("si.posting_date <= %s")
         params.append(str(to_date))
 
-    # --- Party filter logic ---
-    # If no specific parties defined, we apply to ALL customers/suppliers automatically
+    # Decide base tables + party column
     if party_side == "Selling":
-        party_col = "si.customer"
         header = "`tabSales Invoice`"
         item_table = "`tabSales Invoice Item`"
+        party_col = "si.customer"
     else:
-        party_col = "si.supplier"
         header = "`tabPurchase Invoice`"
         item_table = "`tabPurchase Invoice Item`"
+        party_col = "si.supplier"
 
+    # party filter (only if concrete parties provided)
     if concrete_parties:
         placeholders = ", ".join(["%s"] * len(concrete_parties))
         where_clauses.append(f"{party_col} IN ({placeholders})")
         params.extend(concrete_parties)
+
+    # Determine grouping mode from scheme
+    apply_on = (getattr(scheme_doc, "apply_on", "") or "").strip()
+    group_by_clause = ""
+    item_filter_clause = ""
+
+    final_params = list(params)  # we will copy/extend as necessary
+
+    if apply_on == "Item Group":
+        # We need to join Item to access item_group and group totals by item_group.
+        # If concrete item_groups provided, filter by those; otherwise include all.
+        where_sql = " AND ".join(where_clauses)
+        if item_groups:
+            placeholders = ", ".join(["%s"] * len(item_groups))
+            # filter by item_group via Item table (i.item_group IN (...))
+            item_filter_clause = f" AND i.item_group IN ({placeholders})"
+            final_params.extend(list(item_groups))
+        elif item_codes:
+            # If someone supplied explicit item_codes (rare when apply_on=Item Group),
+            # restrict by those item_codes (still aggregate into groups).
+            placeholders = ", ".join(["%s"] * len(item_codes))
+            item_filter_clause = f" AND sii.item_code IN ({placeholders})"
+            final_params.extend(list(item_codes))
+
+        sql = f"""
+            SELECT
+                {party_col} AS party_name,
+                i.item_group AS item_key,
+                SUM(COALESCE(sii.base_net_amount, sii.base_amount, sii.amount, 0)) AS total_amount,
+                SUM(COALESCE(sii.qty, 0)) AS total_qty
+            FROM {header} si
+            JOIN {item_table} sii ON sii.parent = si.name
+            JOIN `tabItem` i ON i.name = sii.item_code
+            WHERE {where_sql}
+            {item_filter_clause}
+            GROUP BY {party_col}, i.item_group
+        """
+
     else:
-        # No party specified in scheme → apply to all customers/suppliers of that side
-        # (no party filter needed here)
-        pass
+        # default: Item Code mode (or unknown) — group by item_code
+        where_sql = " AND ".join(where_clauses)
+        if item_codes:
+            placeholders = ", ".join(["%s"] * len(item_codes))
+            item_filter_clause = f" AND sii.item_code IN ({placeholders})"
+            final_params.extend(list(item_codes))
+        elif item_groups:
+            # If apply_on=item code but user provided groups (shouldn't normally happen),
+            # expand groups to item_codes in SQL by joining Item
+            placeholders = ", ".join(["%s"] * len(item_groups))
+            item_filter_clause = f" AND EXISTS (SELECT 1 FROM `tabItem` i WHERE i.name = sii.item_code AND i.item_group IN ({placeholders}))"
+            final_params.extend(list(item_groups))
 
-    # --- Item filter ---
-    item_clause = ""
-    if concrete_items:
-        placeholders = ", ".join(["%s"] * len(concrete_items))
-        item_clause = f" AND sii.item_code IN ({placeholders})"
+        sql = f"""
+            SELECT
+                {party_col} AS party_name,
+                sii.item_code AS item_key,
+                SUM(COALESCE(sii.base_net_amount, sii.base_amount, sii.amount, 0)) AS total_amount,
+                SUM(COALESCE(sii.qty, 0)) AS total_qty
+            FROM {header} si
+            JOIN {item_table} sii ON sii.parent = si.name
+            WHERE {where_sql}
+            {item_filter_clause}
+            GROUP BY {party_col}, sii.item_code
+        """
 
-    # --- Final SQL ---
-    sql = f"""
-        SELECT
-            {party_col} AS party_name,
-            sii.item_code AS item_code,
-            SUM(COALESCE(sii.base_net_amount, sii.base_amount, sii.amount, 0)) AS total_amount,
-            SUM(COALESCE(sii.qty, 0)) AS total_qty
-        FROM {header} si
-        JOIN {item_table} sii ON sii.parent = si.name
-        WHERE {" AND ".join(where_clauses)}
-        {item_clause}
-        GROUP BY {party_col}, sii.item_code
-    """
-
-    final_params = list(params)
-    if concrete_items:
-        final_params.extend(concrete_items)
-
+    # Execute
     rows = frappe.db.sql(sql, tuple(final_params), as_dict=True) or []
 
+    # Map results into dictionary keyed by (party_name or None, item_key or None)
     totals_map = {}
     for r in rows:
         p = r.get("party_name") or None
-        item = r.get("item_code") or None
-        totals_map[(p, item)] = {
+        key = r.get("item_key") or None
+        totals_map[(p, key)] = {
             "total_amount": flt(r.get("total_amount") or 0.0),
             "total_qty": flt(r.get("total_qty") or 0.0)
         }
@@ -393,7 +353,10 @@ def _get_totals_for_scheme(scheme_doc, party_side, parties, items, report_from=N
 
 
 def get_data(filters):
-    # Filter schemes first (supports scheme_name, apply_on, from_date, to_date)
+    """
+    Main data builder: for each scheme expand parties and items/groups, call totals helper,
+    then emit rows either per item_code or per item_group depending on scheme.apply_on.
+    """
     sql_where = ["1=1"]
     params = {}
 
@@ -406,8 +369,7 @@ def get_data(filters):
         params["apply_on"] = filters.get("apply_on")
 
     schemes = frappe.db.sql(
-        f"""SELECT name FROM `tabCustom Promotional Scheme`
-            WHERE {" AND ".join(sql_where)} ORDER BY creation DESC""",
+        f"""SELECT name FROM `tabCustom Promotional Scheme` WHERE {" AND ".join(sql_where)} ORDER BY creation DESC""",
         params, as_dict=True
     ) or []
 
@@ -419,16 +381,17 @@ def get_data(filters):
         except Exception:
             continue
 
+        # parties
         parties_dict = _extract_party_values_from_scheme(scheme_doc)
         parties = []
-        party_side = (scheme_doc.select_the_party or "").strip()  # "Selling" or "Buying"
+        party_side = (scheme_doc.select_the_party or "").strip()
 
         if party_side == "Selling":
             if parties_dict["customers"]:
                 for c in sorted(parties_dict["customers"]):
                     parties.append(("Customer", c))
             else:
-                parties = []  # none means apply to all
+                parties = []  # empty -> treat as all customers (use totals_map to discover)
         elif party_side == "Buying":
             if parties_dict["suppliers"]:
                 for sname in sorted(parties_dict["suppliers"]):
@@ -436,71 +399,63 @@ def get_data(filters):
             else:
                 parties = []
         else:
+            # default to Selling + all
             party_side = "Selling"
             parties = []
 
-        # Items
-        item_codes = _extract_item_codes_from_scheme(scheme_doc)
-        items = sorted(item_codes) if item_codes else [None]
+        # items / groups
+        items_and_groups = _extract_items_and_groups(scheme_doc)
+        item_codes = items_and_groups.get("item_codes") or set()
+        item_groups = items_and_groups.get("item_groups") or set()
 
-        report_from = filters.get("from_date") or None
-        report_to = filters.get("to_date") or None
+        # decide enumerated display keys depending on scheme.apply_on
+        apply_on = (getattr(scheme_doc, "apply_on", "") or "").strip()
+        if apply_on == "Item Group":
+            display_keys = sorted(item_groups) if item_groups else [None]
+            # For totals we must filter by item_groups (we pass groups)
+            totals_map = _get_totals_for_scheme(scheme_doc, party_side, parties, item_codes=None, item_groups=item_groups, report_from=filters.get("from_date"), report_to=filters.get("to_date"))
+        else:
+            # Item Code mode: display item codes (explicit or expanded from groups)
+            display_keys = sorted(item_codes) if item_codes else [None]
+            totals_map = _get_totals_for_scheme(scheme_doc, party_side, parties, item_codes=item_codes, item_groups=None, report_from=filters.get("from_date"), report_to=filters.get("to_date"))
 
-        totals_map = _get_totals_for_scheme(scheme_doc, party_side, parties, items, report_from, report_to)
-
-        # Build result rows
-        all_parties = set([p for (p, _) in totals_map.keys() if p]) or set()
-        all_items = set([i for (_, i) in totals_map.keys() if i]) or set()
-
-        # When no specific parties defined, use all found in totals_map
+        # If no explicit parties listed in scheme, infer parties from totals_map keys (apply to all found)
         if not parties:
+            found_parties = sorted({p for (p, _) in totals_map.keys() if p})
             if party_side == "Selling":
-                parties = [("Customer", p) for p in all_parties]
+                parties = [("Customer", p) for p in found_parties]
             else:
-                parties = [("Supplier", p) for p in all_parties]
+                parties = [("Supplier", p) for p in found_parties]
 
+        # Build rows (cartesian parties × display_keys)
         for party_type, party_name in parties:
-            for item_code in items:
-                key = (party_name, item_code)
-                totals = totals_map.get(key, {"total_amount": 0.0, "total_qty": 0.0})
+            for key in display_keys:
+                lookup_key = (party_name, key)
+                totals = totals_map.get(lookup_key, {"total_amount": 0.0, "total_qty": 0.0})
                 total_amount = flt(totals.get("total_amount") or 0.0)
                 total_qty = flt(totals.get("total_qty") or 0.0)
 
-                # validation_type = (scheme_doc.type_of_promo_validation or "").strip()
-                # eligible = False
-                # if validation_type == "Based on Minimum Amount":
-                #     min_amount = flt(getattr(scheme_doc, "minimum_amount", 0) or 0)
-                #     if min_amount > 0 and total_amount >= min_amount:
-                #         eligible = True
-                # elif validation_type == "Based on Minimum Quantity":
-                #     min_qty = flt(getattr(scheme_doc, "minimum_quantity", 0) or 0)
-                #     if min_qty > 0 and total_qty >= min_qty:
-                #         eligible = True
-                # else:
-                #     eligible = bool(total_amount > 0 or total_qty > 0)
-
                 validation_type = (scheme_doc.type_of_promo_validation or "").strip()
-                min_amount = flt(getattr(scheme_doc, "minimum_amount", 0) or 0)
-                min_qty = flt(getattr(scheme_doc, "minimum_quantity", 0) or 0)
-
                 eligible = False
-                if validation_type == "Based on Minimum Amount" and min_amount > 0:
-                    eligible = total_amount >= min_amount
-                elif validation_type == "Based on Minimum Quantity" and min_qty > 0:
-                    eligible = total_qty >= min_qty
+                if validation_type == "Based on Minimum Amount":
+                    min_amount = flt(getattr(scheme_doc, "minimum_amount", 0) or 0)
+                    if min_amount > 0 and total_amount >= min_amount:
+                        eligible = True
+                elif validation_type == "Based on Minimum Quantity":
+                    min_qty = flt(getattr(scheme_doc, "minimum_quantity", 0) or 0)
+                    if min_qty > 0 and total_qty >= min_qty:
+                        eligible = True
                 else:
-                    # fallback: if any non-zero sales/purchase activity
                     eligible = (total_amount > 0 or total_qty > 0)
 
-
-                item_or_group_display = item_code if item_code else "-"
+                display_item = key if key else "-"
 
                 result_rows.append({
                     "scheme_name": scheme_doc.scheme_name or scheme_doc.name,
                     "party_type": party_type,
                     "party_name": party_name or "All",
                     "apply_on": scheme_doc.apply_on or "-",
-                    "item_or_group": item_or_group_display,
+                    "item_or_group": display_item,
                     "minimum_amount": flt(getattr(scheme_doc, "minimum_amount", 0) or 0),
                     "minimum_quantity": flt(getattr(scheme_doc, "minimum_quantity", 0) or 0),
                     "discount_percentage": flt(getattr(scheme_doc, "discount_percentage", 0) or 0),
@@ -514,3 +469,206 @@ def get_data(filters):
 
     result_rows = _apply_report_filters(result_rows, filters or {})
     return result_rows
+
+
+# def _get_totals_for_scheme(scheme_doc, party_side, parties, items, report_from=None, report_to=None):
+#     """
+#     Returns dict keyed by (party_name or None, item_code or None) -> { total_amount, total_qty }
+#     Enhanced: if no concrete parties given, apply scheme to ALL parties of that side (Selling/Buying)
+#     """
+#     # Normalize date range
+#     if report_from:
+#         from_date = getdate(report_from)
+#     else:
+#         from_date = getdate(getattr(scheme_doc, "valid_from", None)) if getattr(scheme_doc, "valid_from", None) else None
+
+#     if report_to:
+#         to_date = getdate(report_to)
+#     else:
+#         to_date = getdate(getattr(scheme_doc, "valid_to", None)) if getattr(scheme_doc, "valid_to", None) else None
+
+#     # Build party list values (only concrete names, ignore 'All' marker)
+#     concrete_parties = [pname for (ptype, pname) in parties if pname]
+#     concrete_items = [i for i in items if i]
+
+#     params = []
+#     where_clauses = ["si.docstatus = 1"]
+
+#     # --- Date filter ---
+#     if from_date and to_date:
+#         where_clauses.append("si.posting_date BETWEEN %s AND %s")
+#         params.extend([str(from_date), str(to_date)])
+#     elif from_date:
+#         where_clauses.append("si.posting_date >= %s")
+#         params.append(str(from_date))
+#     elif to_date:
+#         where_clauses.append("si.posting_date <= %s")
+#         params.append(str(to_date))
+
+#     # --- Party filter logic ---
+#     # If no specific parties defined, we apply to ALL customers/suppliers automatically
+#     if party_side == "Selling":
+#         party_col = "si.customer"
+#         header = "`tabSales Invoice`"
+#         item_table = "`tabSales Invoice Item`"
+#     else:
+#         party_col = "si.supplier"
+#         header = "`tabPurchase Invoice`"
+#         item_table = "`tabPurchase Invoice Item`"
+
+#     if concrete_parties:
+#         placeholders = ", ".join(["%s"] * len(concrete_parties))
+#         where_clauses.append(f"{party_col} IN ({placeholders})")
+#         params.extend(concrete_parties)
+#     else:
+#         # No party specified in scheme → apply to all customers/suppliers of that side
+#         # (no party filter needed here)
+#         pass
+
+#     # --- Item filter ---
+#     item_clause = ""
+#     if concrete_items:
+#         placeholders = ", ".join(["%s"] * len(concrete_items))
+#         item_clause = f" AND sii.item_code IN ({placeholders})"
+
+#     # --- Final SQL ---
+#     sql = f"""
+#         SELECT
+#             {party_col} AS party_name,
+#             sii.item_code AS item_code,
+#             SUM(COALESCE(sii.base_net_amount, sii.base_amount, sii.amount, 0)) AS total_amount,
+#             SUM(COALESCE(sii.qty, 0)) AS total_qty
+#         FROM {header} si
+#         JOIN {item_table} sii ON sii.parent = si.name
+#         WHERE {" AND ".join(where_clauses)}
+#         {item_clause}
+#         GROUP BY {party_col}, sii.item_code
+#     """
+
+#     final_params = list(params)
+#     if concrete_items:
+#         final_params.extend(concrete_items)
+
+#     rows = frappe.db.sql(sql, tuple(final_params), as_dict=True) or []
+
+#     totals_map = {}
+#     for r in rows:
+#         p = r.get("party_name") or None
+#         item = r.get("item_code") or None
+#         totals_map[(p, item)] = {
+#             "total_amount": flt(r.get("total_amount") or 0.0),
+#             "total_qty": flt(r.get("total_qty") or 0.0)
+#         }
+
+#     return totals_map
+
+
+# def get_data(filters):
+#     # Filter schemes first (supports scheme_name, apply_on, from_date, to_date)
+#     sql_where = ["1=1"]
+#     params = {}
+
+#     if filters.get("scheme_name"):
+#         sql_where.append("name = %(scheme_name)s")
+#         params["scheme_name"] = filters.get("scheme_name")
+
+#     if filters.get("apply_on"):
+#         sql_where.append("apply_on = %(apply_on)s")
+#         params["apply_on"] = filters.get("apply_on")
+
+#     schemes = frappe.db.sql(
+#         f"""SELECT name FROM `tabCustom Promotional Scheme`
+#             WHERE {" AND ".join(sql_where)} ORDER BY creation DESC""",
+#         params, as_dict=True
+#     ) or []
+
+#     result_rows = []
+
+#     for s in schemes:
+#         try:
+#             scheme_doc = frappe.get_doc("Custom Promotional Scheme", s.name)
+#         except Exception:
+#             continue
+
+#         parties_dict = _extract_party_values_from_scheme(scheme_doc)
+#         parties = []
+#         party_side = (scheme_doc.select_the_party or "").strip()  # "Selling" or "Buying"
+
+#         if party_side == "Selling":
+#             if parties_dict["customers"]:
+#                 for c in sorted(parties_dict["customers"]):
+#                     parties.append(("Customer", c))
+#             else:
+#                 parties = []  # none means apply to all
+#         elif party_side == "Buying":
+#             if parties_dict["suppliers"]:
+#                 for sname in sorted(parties_dict["suppliers"]):
+#                     parties.append(("Supplier", sname))
+#             else:
+#                 parties = []
+#         else:
+#             party_side = "Selling"
+#             parties = []
+
+#         # Items
+#         item_codes = _extract_item_codes_from_scheme(scheme_doc)
+#         items = sorted(item_codes) if item_codes else [None]
+
+#         report_from = filters.get("from_date") or None
+#         report_to = filters.get("to_date") or None
+
+#         totals_map = _get_totals_for_scheme(scheme_doc, party_side, parties, items, report_from, report_to)
+
+#         # Build result rows
+#         all_parties = set([p for (p, _) in totals_map.keys() if p]) or set()
+#         all_items = set([i for (_, i) in totals_map.keys() if i]) or set()
+
+#         # When no specific parties defined, use all found in totals_map
+#         if not parties:
+#             if party_side == "Selling":
+#                 parties = [("Customer", p) for p in all_parties]
+#             else:
+#                 parties = [("Supplier", p) for p in all_parties]
+
+#         for party_type, party_name in parties:
+#             for item_code in items:
+#                 key = (party_name, item_code)
+#                 totals = totals_map.get(key, {"total_amount": 0.0, "total_qty": 0.0})
+#                 total_amount = flt(totals.get("total_amount") or 0.0)
+#                 total_qty = flt(totals.get("total_qty") or 0.0)
+
+#                 validation_type = (scheme_doc.type_of_promo_validation or "").strip()
+#                 min_amount = flt(getattr(scheme_doc, "minimum_amount", 0) or 0)
+#                 min_qty = flt(getattr(scheme_doc, "minimum_quantity", 0) or 0)
+
+#                 eligible = False
+#                 if validation_type == "Based on Minimum Amount" and min_amount > 0:
+#                     eligible = total_amount >= min_amount
+#                 elif validation_type == "Based on Minimum Quantity" and min_qty > 0:
+#                     eligible = total_qty >= min_qty
+#                 else:
+#                     # fallback: if any non-zero sales/purchase activity
+#                     eligible = (total_amount > 0 or total_qty > 0)
+
+
+#                 item_or_group_display = item_code if item_code else "-"
+
+#                 result_rows.append({
+#                     "scheme_name": scheme_doc.scheme_name or scheme_doc.name,
+#                     "party_type": party_type,
+#                     "party_name": party_name or "All",
+#                     "apply_on": scheme_doc.apply_on or "-",
+#                     "item_or_group": item_or_group_display,
+#                     "minimum_amount": flt(getattr(scheme_doc, "minimum_amount", 0) or 0),
+#                     "minimum_quantity": flt(getattr(scheme_doc, "minimum_quantity", 0) or 0),
+#                     "discount_percentage": flt(getattr(scheme_doc, "discount_percentage", 0) or 0),
+#                     "free_quantity": flt(getattr(scheme_doc, "free_quantity", 0) or 0),
+#                     "valid_from": getattr(scheme_doc, "valid_from", None),
+#                     "valid_to": getattr(scheme_doc, "valid_to", None),
+#                     "invoice_amount": total_amount,
+#                     "invoice_qty": total_qty,
+#                     "eligibility_status": "Eligible" if eligible else "Not Eligible",
+#                 })
+
+#     result_rows = _apply_report_filters(result_rows, filters or {})
+#     return result_rows

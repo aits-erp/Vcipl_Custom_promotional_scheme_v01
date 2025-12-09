@@ -1,0 +1,45 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-12-09 12:24:21.669218",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "min_qty",
+  "free_qty",
+  "amount_off"
+ ],
+ "fields": [
+  {
+   "fieldname": "min_qty",
+   "fieldtype": "Float",
+   "label": "Min. Qty."
+  },
+  {
+   "fieldname": "free_qty",
+   "fieldtype": "Float",
+   "label": "Free Qty."
+  },
+  {
+   "fieldname": "amount_off",
+   "fieldtype": "Float",
+   "label": "Amount off"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-12-09 12:26:24.173863",
+ "modified_by": "Administrator",
+ "module": "Promotional Scheme",
+ "name": "Promotional Scheme Quantity with Amount",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

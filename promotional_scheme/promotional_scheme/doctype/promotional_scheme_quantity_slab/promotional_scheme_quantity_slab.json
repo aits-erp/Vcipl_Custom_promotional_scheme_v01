@@ -1,0 +1,52 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-12-09 11:20:28.503957",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "quantity_slab_fields_section",
+  "minimum_quantity",
+  "free_quantity",
+  "free_product"
+ ],
+ "fields": [
+  {
+   "fieldname": "quantity_slab_fields_section",
+   "fieldtype": "Section Break",
+   "label": "Quantity Slab fields"
+  },
+  {
+   "fieldname": "minimum_quantity",
+   "fieldtype": "Float",
+   "label": "Minimum Quantity"
+  },
+  {
+   "fieldname": "free_quantity",
+   "fieldtype": "Float",
+   "label": "Free Quantity"
+  },
+  {
+   "fieldname": "free_product",
+   "fieldtype": "Link",
+   "label": "Free Product",
+   "options": "Item"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2025-12-09 11:33:29.185696",
+ "modified_by": "Administrator",
+ "module": "Promotional Scheme",
+ "name": "Promotional Scheme Quantity Slab",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

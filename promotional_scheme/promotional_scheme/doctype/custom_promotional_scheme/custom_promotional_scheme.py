@@ -24,12 +24,31 @@ class CustomPromotionalScheme(Document):
 
     def validate_condition_fields(self):
         """Ensure selected validation type has required fields."""
-        if self.type_of_promo_validation == "Based on Minimum Amount":
+        promo_type = self.type_of_promo_validation
+
+        # 1) Based on Minimum Amount
+        if promo_type == "Based on Minimum Amount":
             if not self.minimum_amount or not self.discount_percentage:
                 frappe.throw("Please specify both Minimum Amount and Discount Percentage.")
-        elif self.type_of_promo_validation == "Based on Minimum Quantity":
-            if not self.minimum_quantity or not self.free_quantity:
-                frappe.throw("Please specify both Minimum Quantity and Free Quantity.")
+
+        # 2) Based on Minimum Quantity  ---> uses TABLE now
+        elif promo_type == "Based on Minimum Quantity":
+            if not self.quantity_discount_slabs:
+                frappe.throw("Please add at least one row in Quantity Discount Slabs.")
+
+            for row in self.quantity_discount_slabs:
+                if not row.minimum_quantity or not row.free_quantity:
+                    frappe.throw("Each Quantity Discount Slab row must have Minimum Quantity and Free Quantity.")
+
+        # 3) Based on Minimum Quantity & Amount  ---> new child table
+        elif promo_type == "Based on Minimum Quantity & Amount":
+            if not self.free_qty_with_amount_off:
+                frappe.throw("Please add at least one row in Free Qty with Amount Off.")
+
+            for row in self.free_qty_with_amount_off:
+                if not row.min_qty or not row.free_qty or not row.amount_off:
+                    frappe.throw("Each row must have Min Qty, Free Qty, and Amount Off.")
+
 
     @staticmethod
     def get_active_schemes_for_party(party_type):
@@ -190,11 +209,56 @@ def apply_promotional_schemes(doc, method):
                 if discount_pct > 0:
                     apply_discount_to_invoice(doc, matching_items, discount_pct, scheme_doc.name)
         elif scheme_doc.type_of_promo_validation == "Based on Minimum Quantity":
-            total_qty = flt(sum(getattr(it, "qty", 0) or 0 for it in matching_items))
-            if total_qty >= flt(scheme_doc.minimum_quantity or 0):
-                free_qty = flt(scheme_doc.free_quantity or 0)
-                if free_qty > 0:
-                    add_free_items_to_invoice(doc, matching_items, free_qty, scheme_doc.name)
+            total_qty = flt(sum((it.qty or 0) for it in matching_items))
+
+            for slab in scheme_doc.quantity_discount_slabs:
+                if total_qty >= flt(slab.minimum_quantity or 0):
+                    free_qty = flt(slab.free_quantity or 0)
+
+                    # CASE 1: free specific product
+                    if slab.free_product:
+                        add_free_items_to_invoice(
+                            doc, matching_items, free_qty, scheme_doc.name,
+                            free_product=slab.free_product, per_item=False
+                        )
+
+                    # CASE 2: same product free
+                    else:
+                        add_free_items_to_invoice(
+                            doc, matching_items, free_qty, scheme_doc.name,
+                            free_product=None, per_item=True
+                        )
+        elif scheme_doc.type_of_promo_validation == "Based on Minimum Quantity & Amount":
+            total_qty = flt(sum((it.qty or 0) for it in matching_items))
+            total_without_gst = flt(sum((it.base_net_amount or 0) for it in matching_items))
+
+            for row in scheme_doc.free_qty_with_amount_off:
+                min_qty = flt(row.min_qty or 0)
+                free_qty = flt(row.free_qty or 0)
+                amount_off = flt(row.amount_off or 0)
+
+                if total_qty >= min_qty and amount_off > 0:
+                    # Apply amount discount across matched items (same ratio)
+                    discount_per_item = amount_off / len(matching_items)
+
+                    for it in matching_items:
+                        it.rate = flt((it.rate or 0) - discount_per_item)
+                        it.amount = it.qty * it.rate
+                        it.base_amount = it.amount
+                        try:
+                            it.promotional_scheme_applied = scheme_doc.name
+                        except:
+                            pass
+
+                    # Optionally add free qty also
+                    if free_qty > 0:
+                        add_free_items_to_invoice(
+                            doc, matching_items, free_qty, scheme_doc.name,
+                            free_product=None, per_item=True
+                        )
+
+                    frappe.msgprint(f"Promotional Scheme '{scheme_doc.name}' applied: Amount Off {amount_off}.")
+
 
 
 # -------------------------
@@ -253,154 +317,40 @@ def apply_discount_to_invoice(doc, matching_items, discount_pct, scheme_name):
     frappe.msgprint(f"✅ Promotional Scheme '{scheme_name}' applied: {discount_pct}% discount.")
 
 
-def add_free_items_to_invoice(doc, matching_items, free_qty, scheme_name):
+def add_free_items_to_invoice(doc, matching_items, free_qty, scheme_name, free_product=None, per_item=True):
     """
-    Add additional free item rows (zero rate) equal to free_qty for each matched item.
-    If you prefer to add only once per scheme, modify this accordingly.
+    Add free items to invoice.
+    - If free_product is given & per_item=False → one free row for that item.
+    - If per_item=True → free_qty for each matched item.
     """
-    for it in matching_items:
-        # create new child row dict
-        new_row = {
-            "item_code": getattr(it, "item_code", None),
-            "item_name": getattr(it, "item_name", None),
+
+    # CASE 1: Free product (single line)
+    if free_product and not per_item:
+        doc.append("items", {
+            "item_code": free_product,
             "qty": free_qty,
             "rate": 0,
             "amount": 0,
             "base_rate": 0,
             "base_amount": 0,
             "is_free_item": 1,
-        }
-        # optional marker
-        try:
-            new_row["promotional_scheme_applied"] = scheme_name
-        except Exception:
-            pass
+            "promotional_scheme_applied": scheme_name
+        })
+        frappe.msgprint(f"Free Product '{free_product}' Qty {free_qty} added for scheme '{scheme_name}'.")
+        return
 
-        # append to items table
-        doc.append("items", new_row)
+    # CASE 2: Free qty for each matching item
+    for it in matching_items:
+        doc.append("items", {
+            "item_code": it.item_code,
+            "item_name": it.item_name,
+            "qty": free_qty,
+            "rate": 0,
+            "amount": 0,
+            "base_rate": 0,
+            "base_amount": 0,
+            "is_free_item": 1,
+            "promotional_scheme_applied": scheme_name
+        })
 
-    frappe.msgprint(f"🎁 Free Quantity ({free_qty})  '{scheme_name}'.")
-
-# import frappe
-# from frappe.model.document import Document
-# from frappe.utils import nowdate, flt, getdate
-
-
-# class CustomPromotionalScheme(Document):
-#     def validate(self):
-#         self.validate_dates()
-#         self.validate_condition_fields()
-
-#     def validate_dates(self):
-#         if self.valid_from and self.valid_to and getdate(self.valid_from) > getdate(self.valid_to):
-#             frappe.throw("Valid From date cannot be later than Valid To date.")
-
-#     def validate_condition_fields(self):
-#         """Ensure only one condition type is used: minimum amount or minimum quantity"""
-#         if self.type_of_promo_validation == "Based on Minimum Amount":
-#             if not self.minimum_amount or not self.discount_percentage:
-#                 frappe.throw("Please specify both Minimum Amount and Discount Percentage.")
-#         elif self.type_of_promo_validation == "Based on Minimum Quantity":
-#             if not self.minimum_quantity or not self.free_quantity:
-#                 frappe.throw("Please specify both Minimum Quantity and Free Quantity.")
-
-#     @staticmethod
-#     def get_applicable_schemes(party_type):
-#         """Fetch active schemes (valid today) for given party type (Selling/Buying)."""
-#         today = getdate(nowdate())
-#         return frappe.get_all(
-#             "Custom Promotional Scheme",
-#             filters={
-#                 "select_the_party": party_type,
-#                 "valid_from": ["<=", today],
-#                 "valid_to": [">=", today],
-#             },
-#             fields=["name", "apply_on", "type_of_promo_validation", "minimum_amount",
-#                     "discount_percentage", "minimum_quantity", "free_quantity"]
-#         )
-
-
-# def apply_promotional_schemes(doc, method):
-#     """
-#     Hook triggered when Sales/Purchase Invoice is submitted.
-#     Checks if invoice qualifies for any active scheme and applies discount logic.
-#     """
-#     if doc.doctype not in ["Sales Invoice", "Purchase Invoice"]:
-#         return
-
-#     party_type = "Selling" if doc.doctype == "Sales Invoice" else "Buying"
-
-#     # Get all active schemes for this party type
-#     schemes = CustomPromotionalScheme.get_applicable_schemes(party_type)
-#     if not schemes:
-#         return
-
-#     for scheme in schemes:
-#         # Get related items/groups for this scheme
-#         item_list = []
-#         if scheme.apply_on == "Item Code":
-#             item_list = frappe.get_all(
-#                 "Pricing Rule Item Code",
-#                 filters={"parent": scheme.name},
-#                 pluck="item_code"
-#             )
-#         elif scheme.apply_on == "Item Group":
-#             groups = frappe.get_all(
-#                 "Pricing Rule Item Group",
-#                 filters={"parent": scheme.name},
-#                 pluck="item_group"
-#             )
-#             if groups:
-#                 item_list = frappe.get_all(
-#                     "Item",
-#                     filters={"item_group": ["in", groups]},
-#                     pluck="name"
-#                 )
-
-#         # Filter invoice items that match scheme criteria
-#         matching_items = [
-#             d for d in doc.items if d.item_code in item_list
-#         ]
-
-#         if not matching_items:
-#             continue
-
-#         # --- Check eligibility based on scheme type ---
-#         if scheme.type_of_promo_validation == "Based on Minimum Amount":
-#             # Total taxable amount (excluding GST)
-#             total_without_gst = flt(sum(d.base_net_amount for d in matching_items))
-
-#             if total_without_gst >= flt(scheme.minimum_amount):
-#                 discount_pct = flt(scheme.discount_percentage)
-#                 apply_discount_to_invoice(doc, matching_items, discount_pct, scheme.name)
-
-#         elif scheme.type_of_promo_validation == "Based on Minimum Quantity":
-#             total_qty = sum(d.qty for d in matching_items)
-#             if total_qty >= flt(scheme.minimum_quantity):
-#                 free_qty = flt(scheme.free_quantity)
-#                 add_free_items_to_invoice(doc, matching_items, free_qty, scheme.name)
-
-
-# def apply_discount_to_invoice(doc, matching_items, discount_pct, scheme_name):
-#     """Apply discount percentage to eligible items."""
-#     for item in matching_items:
-#         original_rate = flt(item.rate)
-#         discount_amount = original_rate * (discount_pct / 100)
-#         item.rate = original_rate - discount_amount
-#         item.discount_percentage = discount_pct
-#         item.promotional_scheme_applied = scheme_name
-
-#     frappe.msgprint(f"✅ Promotional Scheme '{scheme_name}' applied with {discount_pct}% discount.")
-
-
-# def add_free_items_to_invoice(doc, matching_items, free_qty, scheme_name):
-#     """Add free quantity items to the invoice."""
-#     for item in matching_items:
-#         free_item = item.as_dict().copy()
-#         free_item["qty"] = free_qty
-#         free_item["rate"] = 0
-#         free_item["amount"] = 0
-#         free_item["promotional_scheme_applied"] = scheme_name
-#         doc.append("items", free_item)
-
-#     frappe.msgprint(f"🎁 Free Quantity ({free_qty}) added for scheme '{scheme_name}'.")
+    frappe.msgprint(f"Free Quantity ({free_qty}) added for scheme '{scheme_name}'.")

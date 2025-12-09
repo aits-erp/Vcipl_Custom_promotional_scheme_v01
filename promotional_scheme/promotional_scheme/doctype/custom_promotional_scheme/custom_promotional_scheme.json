@@ -17,15 +17,17 @@
   "column_break_pfjs",
   "valid_to",
   "select_the_type_of_promo_validation_section",
+  "eligible_schemes_section",
+  "eligible_schemes_html",
   "type_of_promo_validation",
   "amount_discount_slabs_section",
   "minimum_amount",
   "column_break_gzww",
   "discount_percentage",
   "quantity_discount_slabs_section",
-  "minimum_quantity",
-  "column_break_nrei",
-  "free_quantity",
+  "quantity_discount_slabs",
+  "quantity_with_free_amount_section",
+  "free_qty_with_amount_off",
   "party_information_section",
   "select_the_party",
   "column_break_vtlc",
@@ -110,16 +112,6 @@
    "label": "Quantity discount slabs"
   },
   {
-   "fieldname": "minimum_quantity",
-   "fieldtype": "Int",
-   "label": "Minimum Quantity"
-  },
-  {
-   "fieldname": "free_quantity",
-   "fieldtype": "Int",
-   "label": "Free Quantity"
-  },
-  {
    "fieldname": "section_break_nnoq",
    "fieldtype": "Section Break"
   },
@@ -196,25 +188,52 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "column_break_nrei",
-   "fieldtype": "Column Break"
-  },
-  {
    "fieldname": "select_the_type_of_promo_validation_section",
    "fieldtype": "Section Break",
    "label": "Select the Type of Promo Validation"
   },
   {
+    "fieldname": "eligible_schemes_section",
+    "fieldtype": "Section Break",
+    "label": "Eligible Promotional Schemes"
+  },
+  {
+    "fieldname": "eligible_schemes_html",
+    "fieldtype": "HTML",
+    "label": "Eligible Schemes",
+    "hidden": 0,
+    "read_only": 1,
+    "options": "<div id='eligible-schemes-container'></div>"
+    },
+  {
    "fieldname": "type_of_promo_validation",
    "fieldtype": "Select",
    "label": "Type of Promo Validation",
-   "options": "\nBased on Minimum Amount\nBased on Minimum Quantity"
+   "options": "\nBased on Minimum Amount\nBased on Minimum Quantity\nBased on Minimum Quantity & Amount"
+  },
+  {
+   "fieldname": "quantity_discount_slabs",
+   "fieldtype": "Table",
+   "label": "Quantity Discount Slabs",
+   "options": "Promotional Scheme Quantity Slab"
+  },
+  {
+   "depends_on": "eval:doc.type_of_promo_validation == \"Based on Minimum Quantity & Amount\"",
+   "fieldname": "quantity_with_free_amount_section",
+   "fieldtype": "Section Break",
+   "label": "Quantity with Free Amount  "
+  },
+  {
+   "fieldname": "free_qty_with_amount_off",
+   "fieldtype": "Table",
+   "label": "Free Qty with amount off",
+   "options": "Promotional Scheme Quantity with Amount"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-10-17 11:15:17.900016",
+ "modified": "2025-12-09 12:28:05.750852",
  "modified_by": "Administrator",
  "module": "Promotional Scheme",
  "name": "Custom Promotional Scheme",
